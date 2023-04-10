@@ -1,9 +1,12 @@
 # TODOs
 ## Biopsy:
-- How much enter the tool in the patient brain
+- [x] How much enter the tool in the patient brain
 ## Trepanation: 
-- Find an alternative robot location for improving manipulability
-- Understand manipulability section
+- [ ] Find an alternative robot location for improving manipulability
+- [ ] Understand manipulability section
 ## Burning:
-- Make sure burning time is correct
-- Repeat displacement, velocity and acceleration
+- [x] Make sure burning time is correct
+- [ ] Repeat displacement, velocity and acceleration
+
+type "enter" on emacs to toggle todo
+  
