@@ -22,10 +22,21 @@ class MobilePage extends Component {
   W = 700;
   H = 500;
 
+  // Mouse pan state
+  _dragging = false;
+  _dragStart = { x: 0, y: 0 };
+
   @action
   async setup(el) {
     this.canvas = el.querySelector('#mobile-canvas');
     this.trajCanvas = el.querySelector('#traj-canvas');
+
+    // Pan/zoom handlers
+    this.canvas.addEventListener('mousedown', (e) => this.onMouseDown(e));
+    this.canvas.addEventListener('mousemove', (e) => this.onMouseMove(e));
+    this.canvas.addEventListener('mouseup', () => this.onMouseUp());
+    this.canvas.addEventListener('mouseleave', () => this.onMouseUp());
+    this.canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
 
     try {
       const [encRes, sensRes, wpRes] = await Promise.all([
@@ -93,6 +104,33 @@ class MobilePage extends Component {
     if (this.step >= this.maxStep) { this.playing = false; }
     this.draw();
     this.animId = requestAnimationFrame(() => this.animate());
+  }
+
+  onMouseDown(e) {
+    this._dragging = true;
+    this._dragStart = { x: e.clientX, y: e.clientY };
+  }
+
+  onMouseMove(e) {
+    if (!this._dragging) return;
+    const dx = e.clientX - this._dragStart.x;
+    const dy = e.clientY - this._dragStart.y;
+    this._dragStart = { x: e.clientX, y: e.clientY };
+    // Convert screen pixels to world coordinates (camera has flipped y)
+    this.camera.cx -= dx / this.camera.scale;
+    this.camera.cy += dy / this.camera.scale;
+    this.draw();
+  }
+
+  onMouseUp() {
+    this._dragging = false;
+  }
+
+  onWheel(e) {
+    e.preventDefault();
+    const factor = e.deltaY > 0 ? 0.9 : 1.1;
+    this.camera.scale *= factor;
+    this.draw();
   }
 
   draw() {
@@ -190,7 +228,7 @@ class MobilePage extends Component {
   <template>
     <div class="page-header">
       <h2>🚗 Mobile Robot Simulator</h2>
-      <p>Replay real encoder &amp; laser data. Differential-drive odometry (axle W=243mm).</p>
+      <p>Replay real encoder &amp; laser data. Drag to pan, scroll to zoom. Differential-drive odometry (axle W=243mm).</p>
     </div>
 
     <div {{didInsert this.setup}} class="grid-2">

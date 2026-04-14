@@ -48,6 +48,7 @@ class WallFollowingPage extends Component {
   @tracked k3Display = 0;
   @tracked trail = [];
   @tracked stepCount = 0;
+  @tracked mode = 'auto'; // 'auto' = wall-following controller, 'manual' = WASD teleop
 
   canvas = null;
   walls = DEFAULT_WALLS;
@@ -56,10 +57,76 @@ class WallFollowingPage extends Component {
   H = 600;
   dt = 0.05; // time step
 
+  // Manual control state
+  keys = { forward: false, backward: false, left: false, right: false };
+  _keydownHandler = null;
+  _keyupHandler = null;
+
   @action
   setup(el) {
     this.canvas = el.querySelector('#wf-canvas');
+    this._keydownHandler = (e) => this.onKeyDown(e);
+    this._keyupHandler = (e) => this.onKeyUp(e);
+    document.addEventListener('keydown', this._keydownHandler);
+    document.addEventListener('keyup', this._keyupHandler);
     this.draw();
+  }
+
+  willDestroy() {
+    super.willDestroy?.();
+    cancelAnimationFrame(this.animId);
+    if (this._keydownHandler) document.removeEventListener('keydown', this._keydownHandler);
+    if (this._keyupHandler) document.removeEventListener('keyup', this._keyupHandler);
+  }
+
+  onKeyDown(e) {
+    const key = e.key.toLowerCase();
+    if (key === 'w' || key === 'arrowup') { this.keys.forward = true; e.preventDefault(); }
+    if (key === 's' || key === 'arrowdown') { this.keys.backward = true; e.preventDefault(); }
+    if (key === 'a' || key === 'arrowleft') { this.keys.left = true; e.preventDefault(); }
+    if (key === 'd' || key === 'arrowright') { this.keys.right = true; e.preventDefault(); }
+
+    // Auto-start in manual mode when keys pressed
+    if (this.mode === 'manual' && !this.playing &&
+        (this.keys.forward || this.keys.backward || this.keys.left || this.keys.right)) {
+      this.playing = true;
+      this.animate();
+    }
+  }
+
+  onKeyUp(e) {
+    const key = e.key.toLowerCase();
+    if (key === 'w' || key === 'arrowup') this.keys.forward = false;
+    if (key === 's' || key === 'arrowdown') this.keys.backward = false;
+    if (key === 'a' || key === 'arrowleft') this.keys.left = false;
+    if (key === 'd' || key === 'arrowright') this.keys.right = false;
+  }
+
+  @action
+  setMode(e) {
+    this.mode = e.target.value;
+    if (this.playing) {
+      this.playing = false;
+      cancelAnimationFrame(this.animId);
+    }
+  }
+
+  @action
+  onCanvasClick(e) {
+    // Click to place robot
+    const rect = this.canvas.getBoundingClientRect();
+    const scaleX = this.W / rect.width;
+    const scaleY = this.H / rect.height;
+    const x = (e.clientX - rect.left) * scaleX;
+    const y = (e.clientY - rect.top) * scaleY;
+    // Only place if inside bounds
+    if (x > 20 && x < this.W - 20 && y > 20 && y < this.H - 20) {
+      this.robotX = x;
+      this.robotY = y;
+      this.trail = [];
+      this.stepCount = 0;
+      this.draw();
+    }
   }
 
   @action
@@ -87,6 +154,46 @@ class WallFollowingPage extends Component {
   animate() {
     if (!this.playing) return;
 
+    if (this.mode === 'manual') {
+      this.manualStep();
+    } else {
+      this.autoStep();
+    }
+
+    this.stepCount = this.stepCount + 1;
+    this.draw();
+    this.animId = requestAnimationFrame(() => this.animate());
+  }
+
+  manualStep() {
+    const speed = 3;
+    const turnRate = 0.06;
+    let vL = 0, vR = 0;
+
+    if (this.keys.forward) { vL += speed; vR += speed; }
+    if (this.keys.backward) { vL -= speed; vR -= speed; }
+    if (this.keys.left) { vL -= turnRate * 50; vR += turnRate * 50; }
+    if (this.keys.right) { vL += turnRate * 50; vR -= turnRate * 50; }
+
+    if (vL === 0 && vR === 0) return; // No input, skip
+
+    const S = 20;
+    const dTheta = (vR - vL) / (2 * S);
+    const dist = (vR + vL) / 2;
+    const newTheta = this.robotTheta + dTheta;
+    const newX = this.robotX + Math.cos(newTheta) * dist;
+    const newY = this.robotY + Math.sin(newTheta) * dist;
+
+    const margin = 15;
+    if (newX > margin && newX < this.W - margin && newY > margin && newY < this.H - margin) {
+      this.trail = [...this.trail, { x: this.robotX, y: this.robotY }].slice(-2000);
+      this.robotX = newX;
+      this.robotY = newY;
+      this.robotTheta = newTheta;
+    }
+  }
+
+  autoStep() {
     // Simulate sensor readings (9 directions around robot)
     const angles = [0, Math.PI/4, Math.PI/2, 3*Math.PI/4, Math.PI,
                     -3*Math.PI/4, -Math.PI/2, -Math.PI/4, 0];
@@ -126,9 +233,6 @@ class WallFollowingPage extends Component {
     this.k1Display = k1;
     this.k2Display = k2;
     this.k3Display = k3;
-    this.stepCount = this.stepCount + 1;
-    this.draw();
-    this.animId = requestAnimationFrame(() => this.animate());
   }
 
   draw() {
@@ -196,20 +300,29 @@ class WallFollowingPage extends Component {
   <template>
     <div class="page-header">
       <h2>🧱 Wall-Following Simulator</h2>
-      <p>Reactive controller with obstacle avoidance (k1), distance maintenance (k2), and wall tracking (k3).</p>
+      <p>Switch to Manual mode and drive with WASD/arrows. Click the canvas to place the robot. Auto mode runs the reactive controller.</p>
     </div>
 
     <div {{didInsert this.setup}} class="grid-2">
       <div class="card span-2">
         <div class="controls">
-          <button class={{if this.playing "primary" ""}} type="button" {{on "click" this.togglePlay}}>
-            {{if this.playing "⏸ Pause" "▶ Play"}}
-          </button>
+          <label>Mode:</label>
+          <select {{on "change" this.setMode}}>
+            <option value="auto" selected>Auto (Controller)</option>
+            <option value="manual">Manual (WASD)</option>
+          </select>
+          {{#if (this.isAuto)}}
+            <button class={{if this.playing "primary" ""}} type="button" {{on "click" this.togglePlay}}>
+              {{if this.playing "⏸ Pause" "▶ Play"}}
+            </button>
+          {{else}}
+            <span style="color:var(--accent);font-size:0.8rem">🎮 Use W/A/S/D or Arrow Keys to drive</span>
+          {{/if}}
           <button type="button" {{on "click" this.reset}}>⏮ Reset</button>
           <span style="color:var(--text-dim);font-size:0.8rem">Steps: {{this.stepCount}}</span>
         </div>
         <div class="canvas-wrap">
-          <canvas id="wf-canvas"></canvas>
+          <canvas id="wf-canvas" {{on "click" this.onCanvasClick}} style="cursor:crosshair"></canvas>
         </div>
       </div>
 
@@ -237,6 +350,17 @@ class WallFollowingPage extends Component {
           <tr><th>y</th><td>{{this.yFmt}} px</td></tr>
           <tr><th>θ</th><td>{{this.thetaFmt}}°</td></tr>
         </table>
+        {{#unless (this.isAuto)}}
+          <div style="margin-top:0.75rem">
+            <h4 style="font-size:0.8rem;color:var(--text-dim)">Controls</h4>
+            <table class="info-table" style="font-size:0.75rem">
+              <tr><td>W / ↑</td><td>Forward</td></tr>
+              <tr><td>S / ↓</td><td>Backward</td></tr>
+              <tr><td>A / ←</td><td>Turn Left</td></tr>
+              <tr><td>D / →</td><td>Turn Right</td></tr>
+            </table>
+          </div>
+        {{/unless}}
       </div>
     </div>
   </template>
@@ -247,6 +371,7 @@ class WallFollowingPage extends Component {
   get xFmt() { return this.robotX.toFixed(1); }
   get yFmt() { return this.robotY.toFixed(1); }
   get thetaFmt() { return (this.robotTheta * 180 / Math.PI).toFixed(1); }
+  isAuto = () => this.mode === 'auto';
 }
 
 <template><WallFollowingPage /></template>

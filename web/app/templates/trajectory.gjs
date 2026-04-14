@@ -2,6 +2,7 @@ import Component from '@glimmer/component';
 import { tracked } from '@glimmer/tracking';
 import { action } from '@ember/object';
 import { on } from '@ember/modifier';
+import { fn } from '@ember/helper';
 import { didInsert } from '@ember/render-modifiers';
 import { ROBOT_CONFIGS, forwardKinematics, getPosition } from '../utils/kinematics';
 import { setupCanvas } from '../utils/canvas-helpers';
@@ -14,9 +15,11 @@ class TrajectoryPage extends Component {
     [Math.PI / 2, 0, Math.PI / 4],
     [0, -Math.PI / 4, Math.PI / 3],
   ];
+  @tracked _wpVersion = 0; // bump to trigger rerender on waypoint mutation
   @tracked progress = 0;
   @tracked interpolation = 'linear';
   @tracked playing = false;
+  @tracked draggingWp = -1;
 
   canvas = null;
   pathCanvas = null;
@@ -200,12 +203,17 @@ class TrajectoryPage extends Component {
   <template>
     <div class="page-header">
       <h2>📐 Trajectory Planner</h2>
-      <p>Joint-space interpolation between waypoints. View joint curves and Cartesian end-effector path.</p>
+      <p>Plan trajectories by editing waypoints. Click values to change, add/remove points, then play to animate.</p>
     </div>
 
-    <div {{this.setup}} class="grid-2">
+    <div {{didInsert this.setup}} class="grid-2">
       <div class="card span-2">
         <div class="controls">
+          <label>Robot:</label>
+          <select {{on "change" this.selectRobot}}>
+            <option value="threeLink" selected>3-Link 3D</option>
+            <option value="puma560">Puma 560 (6-DOF)</option>
+          </select>
           <button class={{if this.playing "primary" ""}} type="button" {{on "click" this.togglePlay}}>
             {{if this.playing "⏸ Pause" "▶ Play"}}
           </button>
@@ -227,22 +235,36 @@ class TrajectoryPage extends Component {
 
       <div class="card">
         <h3 class="card-title">End-Effector Path</h3>
+        <p style="font-size:0.75rem;color:var(--text-dim);margin-bottom:0.5rem">Click canvas to add random waypoint</p>
         <div class="canvas-wrap">
-          <canvas id="path-canvas"></canvas>
+          <canvas id="path-canvas" {{on "click" this.onPathClick}} style="cursor:crosshair"></canvas>
         </div>
       </div>
 
       <div class="card">
-        <h3 class="card-title">Waypoints ({{this.waypoints.length}})</h3>
+        <h3 class="card-title">Waypoints ({{this.waypoints.length}})
+          <button type="button" style="margin-left:0.5rem;font-size:0.75rem" {{on "click" this.addWaypoint}}>+ Add</button>
+        </h3>
         <table class="info-table">
-          <thead><tr><th>#</th>{{#each (this.jointHeaders) as |h|}}<th>{{h}}</th>{{/each}}</tr></thead>
+          <thead><tr><th>#</th>{{#each (this.jointHeaders) as |h|}}<th>{{h}}</th>{{/each}}<th></th></tr></thead>
           <tbody>
             {{#each this.waypoints as |wp idx|}}
               <tr>
                 <td>{{idx}}</td>
-                {{#each wp as |val|}}
-                  <td>{{this.radToDeg val}}°</td>
+                {{#each wp as |val jIdx|}}
+                  <td>
+                    <input type="number" min="-180" max="180" step="5"
+                      value={{this.wpJointDeg idx jIdx}}
+                      {{on "change" (fn this.onWaypointJoint idx jIdx)}}
+                      style="width:3.5rem;background:var(--card);border:1px solid var(--border);color:var(--text);padding:2px 4px;border-radius:4px;font-size:0.75rem"
+                    >
+                  </td>
                 {{/each}}
+                <td>
+                  <button type="button" {{on "click" (fn this.removeWaypoint idx)}}
+                    style="font-size:0.7rem;color:var(--danger,#ff6b6b);background:none;border:none;cursor:pointer"
+                    title="Remove waypoint">✕</button>
+                </td>
               </tr>
             {{/each}}
           </tbody>
@@ -253,7 +275,72 @@ class TrajectoryPage extends Component {
 
   @action onInterp(e) { this.interpolation = e.target.value; this.draw(); }
 
+  @action
+  onWaypointJoint(wpIdx, jIdx, e) {
+    const deg = parseFloat(e.target.value);
+    if (isNaN(deg)) return;
+    const rad = (deg * Math.PI) / 180;
+    const newWps = this.waypoints.map(wp => [...wp]);
+    newWps[wpIdx][jIdx] = rad;
+    this.waypoints = newWps;
+    this._wpVersion++;
+    this.draw();
+  }
+
+  @action
+  addWaypoint() {
+    const n = this.numJoints;
+    // Clone last waypoint or use zeros
+    const last = this.waypoints.length > 0
+      ? [...this.waypoints[this.waypoints.length - 1]]
+      : new Array(n).fill(0);
+    this.waypoints = [...this.waypoints, last];
+    this._wpVersion++;
+    this.draw();
+  }
+
+  @action
+  removeWaypoint(idx) {
+    if (this.waypoints.length <= 2) return; // need at least 2
+    this.waypoints = this.waypoints.filter((_, i) => i !== idx);
+    this._wpVersion++;
+    this.draw();
+  }
+
+  @action
+  selectRobot(e) {
+    this.selectedRobot = e.target.value;
+    const n = this.numJoints;
+    this.waypoints = [
+      new Array(n).fill(0),
+      new Array(n).fill(Math.PI / 4),
+    ];
+    this._wpVersion++;
+    this.draw();
+  }
+
+  @action
+  onPathClick(e) {
+    // Click on end-effector path canvas to add a waypoint by clicking
+    // We'll use IK-like heuristic: randomly perturb last waypoint
+    // This is a convenience — real IK would need a solver
+    const n = this.numJoints;
+    const last = this.waypoints.length > 0
+      ? this.waypoints[this.waypoints.length - 1]
+      : new Array(n).fill(0);
+    const newWp = last.map(v => v + (Math.random() - 0.5) * 0.5);
+    this.waypoints = [...this.waypoints, newWp];
+    this._wpVersion++;
+    this.draw();
+  }
+
   get progressFmt() { return this.progress.toFixed(3); }
+
+  wpJointDeg = (wpIdx, jIdx) => {
+    void this._wpVersion; // depend on version
+    const wp = this.waypoints[wpIdx];
+    return wp ? Math.round((wp[jIdx] ?? 0) * 180 / Math.PI) : 0;
+  };
 
   radToDeg = (v) => (v * 180 / Math.PI).toFixed(0);
 
