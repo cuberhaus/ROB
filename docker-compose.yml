@@ -1,0 +1,6 @@
+services:
+  rob-dashboard:
+    build: .
+    ports:
+      - "8092:8092"
+    restart: unless-stopped

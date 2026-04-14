@@ -1,2 +1,6 @@
 ._*
 .DS_Store
+web/node_modules/
+web/dist/
+web/.env
+web/tmp/
