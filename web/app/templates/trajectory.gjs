@@ -147,6 +147,9 @@ class TrajectoryPage extends Component {
     this.drawPath();
   }
 
+  // Store last projection params so clicks can be un-projected
+  _pathProj = null;
+
   drawPath() {
     if (!this.pathCanvas || !this.config) return;
     const W = 300, H = 300;
@@ -173,6 +176,13 @@ class TrajectoryPage extends Component {
     const rangeX = maxX - minX || 1;
     const rangeZ = maxZ - minZ || 1;
     const scale = Math.min((W - 40) / rangeX, (H - 40) / rangeZ);
+
+    // Save projection for click→world inversion
+    this._pathProj = {
+      W, H, scale,
+      centerX: (minX + maxX) / 2,
+      centerZ: (minZ + maxZ) / 2,
+    };
 
     ctx.strokeStyle = '#4dabf7';
     ctx.lineWidth = 2;
@@ -235,7 +245,7 @@ class TrajectoryPage extends Component {
 
       <div class="card">
         <h3 class="card-title">End-Effector Path</h3>
-        <p style="font-size:0.75rem;color:var(--text-dim);margin-bottom:0.5rem">Click canvas to add random waypoint</p>
+        <p style="font-size:0.75rem;color:var(--text-dim);margin-bottom:0.5rem">Click to add waypoint at that position (IK solved)</p>
         <div class="canvas-wrap">
           <canvas id="path-canvas" {{on "click" this.onPathClick}} style="cursor:crosshair"></canvas>
         </div>
@@ -321,15 +331,46 @@ class TrajectoryPage extends Component {
 
   @action
   onPathClick(e) {
-    // Click on end-effector path canvas to add a waypoint by clicking
-    // We'll use IK-like heuristic: randomly perturb last waypoint
-    // This is a convenience — real IK would need a solver
+    if (!this._pathProj || !this.config) return;
+    const { W, H, scale, centerX, centerZ } = this._pathProj;
+
+    // Convert click pixel → world XZ
+    const rect = this.pathCanvas.getBoundingClientRect();
+    const px = (e.clientX - rect.left) * (W / rect.width);
+    const py = (e.clientY - rect.top) * (H / rect.height);
+    const targetX = (px - W / 2) / scale + centerX;
+    const targetZ = -(py - H / 2) / scale + centerZ;
+
+    // Simple iterative IK: start from last waypoint, minimise XZ error
     const n = this.numJoints;
+    const dh = this.config.dh;
     const last = this.waypoints.length > 0
-      ? this.waypoints[this.waypoints.length - 1]
+      ? [...this.waypoints[this.waypoints.length - 1]]
       : new Array(n).fill(0);
-    const newWp = last.map(v => v + (Math.random() - 0.5) * 0.5);
-    this.waypoints = [...this.waypoints, newWp];
+    const q = [...last];
+    const step = 0.02;
+    const maxIter = 200;
+
+    for (let iter = 0; iter < maxIter; iter++) {
+      const pos = getPosition(forwardKinematics(dh, q).endEffector);
+      const errX = targetX - pos[0];
+      const errZ = targetZ - pos[2];
+      if (errX * errX + errZ * errZ < 1e-6) break;
+
+      // Numerical Jacobian (XZ only) + gradient step
+      for (let j = 0; j < n; j++) {
+        const qp = [...q];
+        qp[j] += 1e-4;
+        const pp = getPosition(forwardKinematics(dh, qp).endEffector);
+        const dxdq = (pp[0] - pos[0]) / 1e-4;
+        const dzdq = (pp[2] - pos[2]) / 1e-4;
+        q[j] += step * (dxdq * errX + dzdq * errZ);
+        // Clamp to ±π
+        q[j] = Math.max(-Math.PI, Math.min(Math.PI, q[j]));
+      }
+    }
+
+    this.waypoints = [...this.waypoints, q];
     this._wpVersion++;
     this.draw();
   }

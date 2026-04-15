@@ -166,18 +166,18 @@ class WallFollowingPage extends Component {
   }
 
   manualStep() {
-    const speed = 3;
-    const turnRate = 0.06;
+    const speed = 2.5;
+    const turnDiff = 1.2; // differential applied to each wheel for turning
     let vL = 0, vR = 0;
 
     if (this.keys.forward) { vL += speed; vR += speed; }
     if (this.keys.backward) { vL -= speed; vR -= speed; }
-    if (this.keys.left) { vL -= turnRate * 50; vR += turnRate * 50; }
-    if (this.keys.right) { vL += turnRate * 50; vR -= turnRate * 50; }
+    if (this.keys.left) { vL -= turnDiff; vR += turnDiff; }
+    if (this.keys.right) { vL += turnDiff; vR -= turnDiff; }
 
     if (vL === 0 && vR === 0) return; // No input, skip
 
-    const S = 20;
+    const S = 40;
     const dTheta = (vR - vL) / (2 * S);
     const dist = (vR + vL) / 2;
     const newTheta = this.robotTheta + dTheta;
