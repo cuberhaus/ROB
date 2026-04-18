@@ -1,5 +1,7 @@
 ._*
 .DS_Store
+*.o
+*.class
 web/node_modules/
 web/dist/
 web/.env
