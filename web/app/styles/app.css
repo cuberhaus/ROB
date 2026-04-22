@@ -119,6 +119,28 @@ body {
   height: auto;
 }
 
+/* Canvas legend bar */
+.canvas-legend {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.35rem 0.75rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.78em;
+  color: var(--c-text-muted, #adb5bd);
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.legend-item .dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
 /* Controls */
 .controls {
   display: flex;
@@ -141,6 +163,36 @@ button, .btn {
 button:hover, .btn:hover { background: var(--border); }
 button.primary { background: var(--accent); color: #000; border-color: var(--accent); }
 button.primary:hover { background: #339af0; }
+
+/* Keyboard controls display */
+.kb-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 0.5rem 0;
+}
+.kb-controls .kb-row {
+  display: flex;
+  gap: 4px;
+}
+.kb-controls kbd {
+  display: inline-block;
+  min-width: 54px;
+  text-align: center;
+  padding: 0.3rem 0.5rem;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.75rem;
+  font-family: inherit;
+  transition: background 0.1s, border-color 0.1s;
+}
+.kb-controls kbd.kb-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #000;
+}
 
 input[type="range"] {
   accent-color: var(--accent);
