@@ -10,6 +10,8 @@ class SensorsPage extends Component {
   @tracked scanIndex = 0;
   @tracked maxScan = 0;
 
+  @tracked scanPlaying = false;
+
   data = null;
   encoderCanvas = null;
   laserCanvas = null;
@@ -60,6 +62,8 @@ class SensorsPage extends Component {
   willDestroy() {
     super.willDestroy?.();
     if (this.resizeObserver) this.resizeObserver.disconnect();
+    cancelAnimationFrame(this._scanAnimId);
+    if (this._keyHandler) document.removeEventListener('keydown', this._keyHandler);
   }
 
   @action
@@ -70,6 +74,50 @@ class SensorsPage extends Component {
       this.drawEncoder();
       this.drawLaserTimeSeries();
     }
+  }
+
+  _setScan(idx) {
+    this.scanIndex = Math.max(0, Math.min(idx, this.maxScan));
+    this.drawScan();
+    if (this.loaded) { this.drawEncoder(); this.drawLaserTimeSeries(); }
+  }
+
+  @action scanFirst() { this._setScan(0); }
+  @action scanLast() { this._setScan(this.maxScan); }
+
+  _scanAnimId = null;
+  _keyHandler = null;
+
+  @action
+  setupScanKeys() {
+    this._keyHandler = (e) => {
+      if (e.key === 'ArrowLeft') { e.preventDefault(); this._setScan(this.scanIndex - 1); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); this._setScan(this.scanIndex + 1); }
+    };
+    document.addEventListener('keydown', this._keyHandler);
+  }
+
+  @action
+  toggleScanPlay() {
+    this.scanPlaying = !this.scanPlaying;
+    if (this.scanPlaying) this._animateScan();
+    else cancelAnimationFrame(this._scanAnimId);
+  }
+
+  _lastScanFrame = 0;
+  _animateScan() {
+    if (!this.scanPlaying) return;
+    this._scanAnimId = requestAnimationFrame((ts) => {
+      if (ts - this._lastScanFrame > 50) {
+        this._lastScanFrame = ts;
+        if (this.scanIndex >= this.maxScan) {
+          this.scanPlaying = false;
+          return;
+        }
+        this._setScan(this.scanIndex + 1);
+      }
+      this._animateScan();
+    });
   }
 
   drawEncoder() {
@@ -322,13 +370,14 @@ class SensorsPage extends Component {
 
       <div class="card" style="margin-top:1rem">
         <h3 class="card-title">Laser Scan Viewer</h3>
-        <p style="font-size:0.75rem;color:var(--text-dim);margin:0 0 0.5rem">Top-down polar view of a single 240° laser scan. Each dot is a surface the laser hit. The robot is at the center; scrub through recorded scans with the slider.</p>
-        <div class="controls">
-          <div class="slider-group" style="flex:1">
-            <label>Scan #</label>
-            <input type="range" min="0" max={{this.maxScan}} value={{this.scanIndex}} {{on "input" this.onScan}}>
-            <span class="val">{{this.scanIndex}} / {{this.maxScan}}</span>
-          </div>
+        <p style="font-size:0.75rem;color:var(--text-dim);margin:0 0 0.5rem">Top-down polar view of a single 240° laser scan. Each dot is a surface the laser hit. The robot is at the center. Use ◀/▶ arrow keys to step, or press play.</p>
+        <div class="controls" {{didInsert this.setupScanKeys}}>
+          <button type="button" {{on "click" this.scanFirst}} title="First">⏮</button>
+          <button class={{if this.scanPlaying "primary" ""}} type="button" {{on "click" this.toggleScanPlay}}>
+            {{if this.scanPlaying "⏸ Pause" "▶ Play"}}
+          </button>
+          <button type="button" {{on "click" this.scanLast}} title="Last">⏭</button>
+          <span class="val">{{this.scanIndex}} / {{this.maxScan}}</span>
         </div>
         <div class="canvas-wrap" style="max-width:400px;margin:0 auto">
           <canvas id="scan-canvas"></canvas>

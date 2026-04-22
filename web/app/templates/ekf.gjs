@@ -119,7 +119,7 @@ class EkfPage extends Component {
         const trueDx = lm.x - gtX;
         const trueDy = lm.y - gtY;
         const trueDist = Math.sqrt(trueDx * trueDx + trueDy * trueDy);
-        
+
         if (trueDist < 4000) {
           // Simulate noisy range measurement
           const noise = (Math.random() - 0.5) * 40; // std dev ~ 11.5 mm
