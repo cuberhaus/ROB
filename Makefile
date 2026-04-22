@@ -1,10 +1,10 @@
 .PHONY: dev build docker-up docker-down docker-rebuild data help
 
 dev:
-	cd web && npx ember serve --port 8092
+	cd web && npx vite --port 8092
 
 build:
-	cd web && npx ember build --environment=production
+	cd web && npx vite build
 
 data:
 	python3 scripts/mat2json.py

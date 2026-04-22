@@ -14,9 +14,9 @@ export function createEKF(x0 = 0, y0 = 0, theta0 = 0) {
     // Covariance (3x3 as flat array, row-major)
     P: [0.01, 0, 0, 0, 0.01, 0, 0, 0, 0.01],
     // Process noise
-    Q: [0.1, 0, 0, 0, 0.1, 0, 0, 0, 0.05],
-    // Measurement noise (range)
-    R_range: 50,
+    Q: [2.0, 0, 0, 0, 2.0, 0, 0, 0, 0.02],
+    // Measurement noise (range variance)
+    R_range: 400,
   };
 }
 
@@ -25,23 +25,24 @@ export function createEKF(x0 = 0, y0 = 0, theta0 = 0) {
  * @param {object} ekf - EKF state
  * @param {number} dL - Left wheel delta (mm)
  * @param {number} dR - Right wheel delta (mm)
- * @param {number} S - Axle half-width (mm)
+ * @param {number} W - Wheelbase (mm)
  */
-export function ekfPredict(ekf, dL, dR, S = 121.5) {
+export function ekfPredict(ekf, dL, dR, W = 520) {
   const [x, y, theta] = ekf.x;
-  const dTheta = (dR - dL) / (2 * S);
+  const dTheta = (dR - dL) / W;
   const dist = (dR + dL) / 2;
+  const midTheta = theta + dTheta / 2;
   const newTheta = theta + dTheta;
-  const dx = dist * Math.cos(newTheta);
-  const dy = dist * Math.sin(newTheta);
+  const dx = dist * Math.cos(midTheta);
+  const dy = dist * Math.sin(midTheta);
 
   // Update state
   ekf.x = [x + dx, y + dy, newTheta];
 
   // Jacobian F = df/dx
   const F = [
-    1, 0, -dist * Math.sin(newTheta),
-    0, 1, dist * Math.cos(newTheta),
+    1, 0, -dist * Math.sin(midTheta),
+    0, 1, dist * Math.cos(midTheta),
     0, 0, 1,
   ];
 
@@ -80,7 +81,7 @@ export function ekfUpdate(ekf, measuredRange, lx, ly) {
   // Update state
   ekf.x = ekf.x.map((xi, i) => xi + K[i] * innovation);
 
-  // Update covariance: P = (I - K*H) * P
+  // Update covariance using Joseph form for stability: P = (I-KH)P(I-KH)' + KRK'
   const KH = [
     K[0]*H[0], K[0]*H[1], K[0]*H[2],
     K[1]*H[0], K[1]*H[1], K[1]*H[2],
@@ -91,7 +92,18 @@ export function ekfUpdate(ekf, measuredRange, lx, ly) {
     -KH[3], 1-KH[4], -KH[5],
     -KH[6], -KH[7], 1-KH[8],
   ];
-  ekf.P = mat3Mult(IKH, ekf.P);
+  const IKH_P_IKHt = mat3MultABAt(IKH, ekf.P);
+  const KRKt = [
+    K[0]*ekf.R_range*K[0], K[0]*ekf.R_range*K[1], K[0]*ekf.R_range*K[2],
+    K[1]*ekf.R_range*K[0], K[1]*ekf.R_range*K[1], K[1]*ekf.R_range*K[2],
+    K[2]*ekf.R_range*K[0], K[2]*ekf.R_range*K[1], K[2]*ekf.R_range*K[2],
+  ];
+  ekf.P = mat3Add(IKH_P_IKHt, KRKt);
+
+  // Force symmetry to prevent numerical divergence
+  ekf.P[1] = ekf.P[3] = (ekf.P[1] + ekf.P[3]) / 2;
+  ekf.P[2] = ekf.P[6] = (ekf.P[2] + ekf.P[6]) / 2;
+  ekf.P[5] = ekf.P[7] = (ekf.P[5] + ekf.P[7]) / 2;
 }
 
 /**

@@ -9,8 +9,8 @@ const MAP_ROWS = 100;
 const MAP_COLS = 100;
 
 // Robot physical parameters (same as real robot)
-const AXLE_HALF = 121.5; // mm, half the wheel separation
-const ROBOT_RADIUS = 100; // mm, collision radius
+const AXLE_HALF = 260; // mm, half the wheel separation
+const ROBOT_RADIUS = 200; // mm, collision radius
 
 // Laser parameters (matching the real 240° scanner)
 const LASER_FOV = (240 * Math.PI) / 180;

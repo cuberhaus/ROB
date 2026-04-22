@@ -17,11 +17,26 @@ class SensorsPage extends Component {
   W = 600;
   H = 250;
 
+  resizeObserver = null;
+
   @action
   async setup(el) {
     this.encoderCanvas = el.querySelector('#enc-canvas');
     this.laserCanvas = el.querySelector('#laser-canvas');
     this.scanCanvas = el.querySelector('#scan-canvas');
+
+    this.resizeObserver = new ResizeObserver(entries => {
+      for (let entry of entries) {
+        if (entry.target === this.encoderCanvas.parentElement) {
+          this.W = entry.contentRect.width;
+          if (this.loaded) {
+            this.drawEncoder();
+            this.drawLaserTimeSeries();
+          }
+        }
+      }
+    });
+    this.resizeObserver.observe(this.encoderCanvas.parentElement);
 
     try {
       const [sensRes, laserRes] = await Promise.all([
@@ -42,10 +57,19 @@ class SensorsPage extends Component {
     }
   }
 
+  willDestroy() {
+    super.willDestroy?.();
+    if (this.resizeObserver) this.resizeObserver.disconnect();
+  }
+
   @action
   onScan(e) {
     this.scanIndex = parseInt(e.target.value, 10);
     this.drawScan();
+    if (this.loaded) {
+      this.drawEncoder();
+      this.drawLaserTimeSeries();
+    }
   }
 
   drawEncoder() {
@@ -95,6 +119,40 @@ class SensorsPage extends Component {
     ctx.fillText('Left ω', 5, 12);
     ctx.fillStyle = '#69db7c';
     ctx.fillText('Right ω', 55, 12);
+
+    // Axis labels
+    ctx.fillStyle = '#8b8fa3';
+    ctx.font = '10px Inter, sans-serif';
+    ctx.fillText('Time (s)', this.W / 2 - 20, this.H - 2);
+    ctx.save();
+    ctx.translate(10, this.H / 2 + 20);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText('ω (rad/s)', 0, 0);
+    ctx.restore();
+
+    // Y-axis tick labels
+    ctx.fillStyle = '#5c5f73';
+    ctx.font = '9px Inter, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(maxV.toFixed(1), 2, 25);
+    ctx.fillText(minV.toFixed(1), 2, this.H - 18);
+
+    // X-axis tick labels
+    ctx.fillText('0', 2, this.H - 5);
+    ctx.textAlign = 'right';
+    ctx.fillText(maxT.toFixed(1) + 's', this.W - 2, this.H - 5);
+    ctx.textAlign = 'left';
+
+    // Playhead
+    if (this.maxScan > 0) {
+      const playheadPx = (this.scanIndex / this.maxScan) * this.W;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(playheadPx, 0);
+      ctx.lineTo(playheadPx, this.H);
+      ctx.stroke();
+    }
   }
 
   drawLaserTimeSeries() {
@@ -134,7 +192,28 @@ class SensorsPage extends Component {
     ctx.font = '11px Inter, sans-serif';
     for (let s = 0; s < Math.min(4, colors.length); s++) {
       ctx.fillStyle = colors[s];
-      ctx.fillText(`Sensor ${s}`, 5 + s * 65, 12);
+      ctx.fillText(`Beam ${s}`, 5 + s * 55, 12);
+    }
+
+    // Axis labels
+    ctx.fillStyle = '#8b8fa3';
+    ctx.font = '10px Inter, sans-serif';
+    ctx.fillText('Scan index', this.W / 2 - 25, this.H - 2);
+    ctx.save();
+    ctx.translate(10, this.H / 2 + 15);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText('Distance (mm)', 0, 0);
+    ctx.restore();
+
+    // Playhead
+    if (this.maxScan > 0) {
+      const playheadPx = (this.scanIndex / this.maxScan) * this.W;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(playheadPx, 0);
+      ctx.lineTo(playheadPx, this.H);
+      ctx.stroke();
     }
   }
 
@@ -161,14 +240,37 @@ class SensorsPage extends Component {
     }
     const scale = (H / 2 - 20) / (maxR || 1);
 
-    // Draw range circles
+    // Draw range circles with labels
     ctx.strokeStyle = '#1a1d27';
     ctx.lineWidth = 0.5;
+    ctx.font = '9px Inter, sans-serif';
+    ctx.fillStyle = '#5c5f73';
     for (let r = 1000; r <= maxR; r += 1000) {
       ctx.beginPath();
       ctx.arc(W / 2, H / 2, r * scale, 0, Math.PI * 2);
       ctx.stroke();
+      ctx.fillText(`${(r / 1000).toFixed(0)}m`, W / 2 + 3, H / 2 - r * scale + 10);
     }
+
+    // Draw FOV arc to show scanning area
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(W / 2, H / 2);
+    ctx.arc(W / 2, H / 2, 30, -fov / 2, fov / 2);
+    ctx.closePath();
+    ctx.stroke();
+
+    // Forward direction indicator
+    ctx.strokeStyle = '#ff6b6b';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(W / 2, H / 2);
+    ctx.lineTo(W / 2 + 25, H / 2);
+    ctx.stroke();
+    ctx.fillStyle = '#ff6b6b';
+    ctx.font = '9px Inter, sans-serif';
+    ctx.fillText('front', W / 2 + 28, H / 2 + 3);
 
     // Draw scan points
     ctx.fillStyle = '#69db7c';
@@ -196,20 +298,22 @@ class SensorsPage extends Component {
   <template>
     <div class="page-header">
       <h2>📊 Sensor Dashboard</h2>
-      <p>Time-series encoder and laser plots from real mobile robot data.</p>
+      <p>Recorded data from a real mobile robot: wheel encoders and a 240° laser rangefinder (683 beams).</p>
     </div>
 
     <div {{didInsert this.setup}}>
       <div class="grid-2">
         <div class="card">
           <h3 class="card-title">Encoder Angular Speed</h3>
+          <p style="font-size:0.75rem;color:var(--text-dim);margin:0 0 0.5rem">Left and right wheel angular velocities over time.</p>
           <div class="canvas-wrap">
             <canvas id="enc-canvas"></canvas>
           </div>
         </div>
 
         <div class="card">
-          <h3 class="card-title">Laser Distance Sensors</h3>
+          <h3 class="card-title">Laser Distance (4 beams)</h3>
+          <p style="font-size:0.75rem;color:var(--text-dim);margin:0 0 0.5rem">Distance measured by 4 individual laser beams across all scans.</p>
           <div class="canvas-wrap">
             <canvas id="laser-canvas"></canvas>
           </div>
@@ -218,11 +322,12 @@ class SensorsPage extends Component {
 
       <div class="card" style="margin-top:1rem">
         <h3 class="card-title">Laser Scan Viewer</h3>
+        <p style="font-size:0.75rem;color:var(--text-dim);margin:0 0 0.5rem">Top-down polar view of a single 240° laser scan. Each dot is a surface the laser hit. The robot is at the center; scrub through recorded scans with the slider.</p>
         <div class="controls">
           <div class="slider-group" style="flex:1">
-            <label>Scan</label>
+            <label>Scan #</label>
             <input type="range" min="0" max={{this.maxScan}} value={{this.scanIndex}} {{on "input" this.onScan}}>
-            <span class="val">{{this.scanIndex}}/{{this.maxScan}}</span>
+            <span class="val">{{this.scanIndex}} / {{this.maxScan}}</span>
           </div>
         </div>
         <div class="canvas-wrap" style="max-width:400px;margin:0 auto">

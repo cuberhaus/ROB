@@ -12,8 +12,8 @@ import {
 
 // Occupancy grid config
 const GRID_RES = 50;       // mm per cell
-const GRID_SIZE = 300;     // 300x300 cells = 15m x 15m
-const GRID_ORIGIN = -7500; // grid[0][0] corresponds to (-7500, -7500) mm
+const GRID_SIZE = 600;     // 600x600 cells = 30m x 30m
+
 
 class MobilePage extends Component {
   @tracked playing = false;
@@ -36,6 +36,8 @@ class MobilePage extends Component {
   // Occupancy grid: counts of laser hits per cell
   occGrid = null;
   _lastGridStep = -1;  // track which steps we've already accumulated
+  gridOriginX = -7500;
+  gridOriginY = -7500;
 
   // Interactive mode state
   mapGrid = null;
@@ -80,7 +82,25 @@ class MobilePage extends Component {
       const wp = await wpRes.json();
       const mapJson = await mapRes.json();
 
-      this.trajectory = buildTrajectory(enc.L_acu, enc.R_acu);
+      // Convert encoder distances from meters to millimeters
+      enc.L_acu.forEach(p => { p[1] *= 1000; });
+      enc.R_acu.forEach(p => { p[1] *= 1000; });
+
+      // The waypoints in the dataset are in grid cell units (resolution = 0.18m/cell)
+      // Multiply by 180 to convert to millimeters
+      wp.waypoints[0] = wp.waypoints[0].map(v => v * 180);
+      wp.waypoints[1] = wp.waypoints[1].map(v => v * 180);
+
+      // The robot's starting position matches the first waypoint
+      // Its initial heading is parallel to the first long corridor (WP1 to WP8)
+      const x0 = wp.waypoints[0][0];
+      const y0 = wp.waypoints[1][0];
+      const dx = wp.waypoints[0][7] - wp.waypoints[0][0];
+      const dy = wp.waypoints[1][7] - wp.waypoints[1][0];
+      const theta0 = Math.atan2(dy, dx);
+      const W = (enc.W || 0.52) * 1000; // wheelbase in mm
+
+      this.trajectory = buildTrajectory(enc.L_acu, enc.R_acu, W, x0, y0, theta0);
       this.encoderRaw = enc;
       this.sensorData = sens;
       this.waypoints = wp.waypoints;
@@ -99,13 +119,16 @@ class MobilePage extends Component {
       this.loaded = true;
       this._initGrid();
 
-      // Auto-center camera
+      // Auto-center camera and map grid
       const xs = this.trajectory.x;
       const ys = this.trajectory.y;
       const minX = Math.min(...xs), maxX = Math.max(...xs);
       const minY = Math.min(...ys), maxY = Math.max(...ys);
       this.camera.cx = (minX + maxX) / 2;
       this.camera.cy = (minY + maxY) / 2;
+      this.gridOriginX = this.camera.cx - (GRID_SIZE * GRID_RES) / 2;
+      this.gridOriginY = this.camera.cy - (GRID_SIZE * GRID_RES) / 2;
+
       const rangeX = maxX - minX || 1;
       const rangeY = maxY - minY || 1;
       this.camera.scale = Math.min(this.W / rangeX, this.H / rangeY) * 0.8;
@@ -176,8 +199,8 @@ class MobilePage extends Component {
       const { lx, ly } = laserToCartesian(ranges);
       const { wx, wy } = transformPoints(lx, ly, x[s], y[s], theta[s]);
       for (let j = 0; j < wx.length; j++) {
-        const gx = Math.floor((wx[j] - GRID_ORIGIN) / GRID_RES);
-        const gy = Math.floor((wy[j] - GRID_ORIGIN) / GRID_RES);
+      const gx = Math.floor((wx[j] - this.gridOriginX) / GRID_RES);
+      const gy = Math.floor((wy[j] - this.gridOriginY) / GRID_RES);
         if (gx >= 0 && gx < GRID_SIZE && gy >= 0 && gy < GRID_SIZE) {
           this.occGrid[gy * GRID_SIZE + gx] += 1;
         }
@@ -272,7 +295,7 @@ class MobilePage extends Component {
     // Read keyboard → compute wheel velocities
     const k = this._keys;
     const FWD = 25;  // mm per tick forward speed
-    const TURN = 15; // mm per tick differential for turning
+    const TURN = 10; // mm per tick differential for turning
     let vL = 0, vR = 0;
 
     if (k['ArrowUp'] || k['w']) { vL += FWD; vR += FWD; }
@@ -390,7 +413,7 @@ class MobilePage extends Component {
     ctx.stroke();
 
     // Wheels
-    const wheelLen = 60, wheelW = 12;
+    const wheelLen = 120, wheelW = 24;
     ctx.save();
     ctx.translate(this.simX, this.simY);
     ctx.rotate(this.simTheta);
@@ -403,7 +426,7 @@ class MobilePage extends Component {
 
     // Heading arrow
     ctx.fillStyle = '#ff6b6b';
-    drawArrow(ctx, this.simX, this.simY, this.simTheta, 60 / cam.scale * 0.3);
+    drawArrow(ctx, this.simX, this.simY, this.simTheta, 120 / cam.scale * 0.3);
 
     // Velocity vector
     if (this.simVL !== 0 || this.simVR !== 0) {
@@ -491,8 +514,8 @@ class MobilePage extends Component {
           const g = Math.round(100 * (1 - intensity));
           const b = Math.round(50 * (1 - intensity));
           ctx.fillStyle = `rgba(${r},${g},${b},${0.3 + 0.6 * intensity})`;
-          const wx = GRID_ORIGIN + gx * GRID_RES;
-          const wy = GRID_ORIGIN + gy * GRID_RES;
+          const wx = this.gridOriginX + gx * GRID_RES;
+          const wy = this.gridOriginY + gy * GRID_RES;
           ctx.fillRect(wx, wy, GRID_RES, GRID_RES);
         }
       }
@@ -504,16 +527,16 @@ class MobilePage extends Component {
       const wp = this.waypoints;
       for (let j = 0; j < wp[0].length; j++) {
         ctx.beginPath();
-        ctx.arc(wp[0][j], wp[1][j], 30, 0, Math.PI * 2);
+        ctx.arc(wp[0][j], wp[1][j], 200, 0, Math.PI * 2);
         ctx.fill();
         // Waypoint label
         ctx.save();
         ctx.translate(wp[0][j], wp[1][j]);
         ctx.scale(1 / cam.scale, -1 / cam.scale);
         ctx.fillStyle = '#ffd43b';
-        ctx.font = 'bold 10px Inter, sans-serif';
+        ctx.font = 'bold 12px Inter, sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText(`WP${j + 1}`, 0, -6);
+        ctx.fillText(`WP${j + 1}`, 0, -12);
         ctx.restore();
       }
     }
@@ -551,14 +574,14 @@ class MobilePage extends Component {
         ctx.fillStyle = 'rgba(105,219,124,0.5)';
         for (let j = 0; j < wx.length; j++) {
           ctx.beginPath();
-          ctx.arc(wx[j], wy[j], 6, 0, Math.PI * 2);
+          ctx.arc(wx[j], wy[j], 40, 0, Math.PI * 2);
           ctx.fill();
         }
       }
     }
 
     // Draw robot body (circle + arrow)
-    const robotR = 80;
+    const robotR = 200;
     ctx.beginPath();
     ctx.arc(x[i], y[i], robotR, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(255,107,107,0.15)';
@@ -568,8 +591,8 @@ class MobilePage extends Component {
     ctx.stroke();
 
     // Draw wheel indicators
-    const wheelLen = 60, wheelW = 12;
-    const S = 121.5;
+    const wheelLen = 120, wheelW = 24;
+    const S = 260;
     ctx.save();
     ctx.translate(x[i], y[i]);
     ctx.rotate(theta[i]);
@@ -595,7 +618,7 @@ class MobilePage extends Component {
         ctx.stroke();
         // Arrowhead
         const angle = Math.atan2(dy, dx);
-        const aLen = 30;
+        const aLen = 50;
         ctx.beginPath();
         ctx.moveTo(x[i] + dx * vScale, y[i] + dy * vScale);
         ctx.lineTo(
@@ -613,7 +636,7 @@ class MobilePage extends Component {
       // Draw angular velocity arc
       const dTheta = theta[i] - theta[i - 1];
       if (Math.abs(dTheta) > 0.001) {
-        const arcR = 120;
+        const arcR = 250;
         ctx.strokeStyle = dTheta > 0 ? '#b197fc' : '#f783ac';
         ctx.lineWidth = 2 / cam.scale;
         ctx.beginPath();
@@ -626,7 +649,7 @@ class MobilePage extends Component {
 
     // Draw robot heading arrow
     ctx.fillStyle = '#ff6b6b';
-    drawArrow(ctx, x[i], y[i], theta[i], 60 / cam.scale * 0.3);
+    drawArrow(ctx, x[i], y[i], theta[i], 120 / cam.scale * 0.3);
   }
 
   drawTrajectory() {
@@ -823,7 +846,7 @@ class MobilePage extends Component {
         <h3 class="card-title">📖 What's Happening?</h3>
         <details open>
           <summary><strong>Differential-Drive Odometry</strong></summary>
-          <p>The robot has two independently driven wheels separated by <strong>2S = 243 mm</strong>.
+          <p>The robot has two independently driven wheels separated by <strong>2S = 520 mm</strong>.
           At each timestep, the left (ΔL) and right (ΔR) wheel encoder increments are used to compute:</p>
           <ul>
             <li><strong>Δθ = (ΔR − ΔL) / 2S</strong> — heading change (if ΔR &gt; ΔL, the robot turns left)</li>

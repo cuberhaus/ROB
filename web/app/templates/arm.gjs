@@ -44,10 +44,22 @@ class ArmPage extends Component {
 
   @action
   async setup(el) {
+    if (window.__armEngine) {
+      window.__armEngine.dispose();
+    }
     this.canvas = el.querySelector('#arm-canvas');
     await this.initBabylon();
+    window.__armEngine = this.engine;
     this.loaded = true;
     this.updateArm();
+  }
+
+  willDestroy() {
+    super.willDestroy();
+    if (this.engine) {
+      this.engine.dispose();
+      window.__armEngine = null;
+    }
   }
 
   async initBabylon() {
@@ -151,11 +163,20 @@ class ArmPage extends Component {
 
         if (len > 0.001) {
           const up = new B.Vector3(0, 1, 0);
-          const axis = B.Vector3.Cross(up, dir.normalize());
-          const angle = Math.acos(Math.min(1, B.Vector3.Dot(up, dir.normalize())));
+          const dirN = dir.normalize();
+          const axis = B.Vector3.Cross(up, dirN);
           if (axis.length() > 0.001) {
-            this.linkMeshes[i].rotationQuaternion = B.Quaternion.RotationAxis(axis.normalize(), angle);
+            const dot = Math.max(-1, Math.min(1, B.Vector3.Dot(up, dirN)));
+            this.linkMeshes[i].rotationQuaternion = B.Quaternion.RotationAxis(axis.normalize(), Math.acos(dot));
+          } else {
+            if (B.Vector3.Dot(up, dirN) < 0) {
+              this.linkMeshes[i].rotationQuaternion = B.Quaternion.RotationAxis(new B.Vector3(1, 0, 0), Math.PI);
+            } else {
+              this.linkMeshes[i].rotationQuaternion = B.Quaternion.Identity();
+            }
           }
+        } else {
+          this.linkMeshes[i].rotationQuaternion = B.Quaternion.Identity();
         }
       }
 
@@ -199,11 +220,16 @@ class ArmPage extends Component {
   <template>
     <div class="page-header">
       <h2>🦾 Robot Arm Visualizer</h2>
-      <p>3D forward kinematics with DH parameters. Drag to orbit, scroll to zoom.</p>
+      <p>Interactive 3D visualization of a robot arm computed via forward kinematics from DH (Denavit-Hartenberg) parameters. Drag to orbit, scroll to zoom.</p>
     </div>
 
     <div {{didInsert this.setup}} class="grid-2">
       <div class="card span-2">
+        <p style="font-size:0.75rem;color:var(--text-dim);margin:0 0 0.5rem">
+          The 3D view shows the arm's current configuration. Each joint is a sphere, each link is a cylinder.
+          Use the sliders on the right to change joint angles and see how the end-effector moves in real time.
+          Preset buttons load common arm poses.
+        </p>
         <div class="controls">
           <label>Robot:</label>
           <select {{on "change" this.selectRobot}}>
@@ -223,6 +249,7 @@ class ArmPage extends Component {
 
       <div class="card">
         <h3 class="card-title">Joint Angles</h3>
+        <p style="font-size:0.75rem;color:var(--text-dim);margin:0 0 0.5rem">Drag sliders to rotate each joint. Values are in degrees (-180° to 180°).</p>
         {{#each this.dhTable as |link|}}
           <div class="slider-group">
             <label>q{{link.i}}</label>
@@ -235,6 +262,7 @@ class ArmPage extends Component {
 
       <div class="card">
         <h3 class="card-title">DH Parameters</h3>
+        <p style="font-size:0.75rem;color:var(--text-dim);margin:0 0 0.5rem">The Denavit-Hartenberg table defines each link's geometry. θ is the joint angle, d is the link offset along Z, a is the link length along X, and α is the twist angle between consecutive Z axes.</p>
         <table class="info-table">
           <thead><tr><th>i</th><th>θ (°)</th><th>d</th><th>a</th><th>α (°)</th></tr></thead>
           <tbody>

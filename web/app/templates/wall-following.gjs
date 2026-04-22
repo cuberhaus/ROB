@@ -3,7 +3,7 @@ import { tracked } from '@glimmer/tracking';
 import { action } from '@ember/object';
 import { on } from '@ember/modifier';
 import { didInsert } from '@ember/render-modifiers';
-import { wallFollowingStep } from '../utils/wall-following';
+import { wallFollowingStep, DEFAULTS } from '../utils/wall-following';
 import { setupCanvas } from '../utils/canvas-helpers';
 
 // Simple obstacle map for simulation
@@ -38,6 +38,47 @@ function raycast(ox, oy, angle, walls, maxDist = 3000) {
   return minDist < maxDist ? minDist : -1;
 }
 
+function distToSegmentSquared(x, y, x1, y1, x2, y2) {
+  const C = x2 - x1;
+  const D = y2 - y1;
+  const lenSq = C * C + D * D;
+  if (lenSq === 0) {
+    const dx = x - x1;
+    const dy = y - y1;
+    return dx * dx + dy * dy;
+  }
+  const t = Math.max(0, Math.min(1, ((x - x1) * C + (y - y1) * D) / lenSq));
+  const projX = x1 + t * C;
+  const projY = y1 + t * D;
+  const dx = x - projX;
+  const dy = y - projY;
+  return dx * dx + dy * dy;
+}
+
+function checkCollision(x, y, margin, walls, width, height) {
+  if (x <= margin || x >= width - margin || y <= margin || y >= height - margin) {
+    return true;
+  }
+  const marginSq = margin * margin;
+  for (const w of walls) {
+    // Fast Axis-Aligned Bounding Box (AABB) rejection
+    // If the robot's bounding box doesn't overlap the wall's bounding box, skip the expensive math
+    const minX = Math.min(w.x1, w.x2) - margin;
+    const maxX = Math.max(w.x1, w.x2) + margin;
+    if (x < minX || x > maxX) continue;
+
+    const minY = Math.min(w.y1, w.y2) - margin;
+    const maxY = Math.max(w.y1, w.y2) + margin;
+    if (y < minY || y > maxY) continue;
+
+    // Only do the exact point-to-segment math if we are close to the wall
+    if (distToSegmentSquared(x, y, w.x1, w.y1, w.x2, w.y2) < marginSq) {
+      return true;
+    }
+  }
+  return false;
+}
+
 class WallFollowingPage extends Component {
   @tracked playing = false;
   @tracked robotX = 120;
@@ -49,6 +90,15 @@ class WallFollowingPage extends Component {
   @tracked trail = [];
   @tracked stepCount = 0;
   @tracked mode = 'auto'; // 'auto' = wall-following controller, 'manual' = WASD teleop
+  @tracked speed = 1;
+
+  // Tunable controller parameters
+  @tracked thLateral = DEFAULTS.thLateral;
+  @tracked thCentral = DEFAULTS.thCentral;
+  @tracked thDiag = DEFAULTS.thDiag;
+  @tracked maxCentral = DEFAULTS.maxCentral;
+  @tracked maxDiag = DEFAULTS.maxDiag;
+  @tracked maxLateral = DEFAULTS.maxLateral;
 
   canvas = null;
   walls = DEFAULT_WALLS;
@@ -178,14 +228,14 @@ class WallFollowingPage extends Component {
     if (vL === 0 && vR === 0) return; // No input, skip
 
     const S = 40;
-    const dTheta = (vR - vL) / (2 * S);
+    const dTheta = (vL - vR) / (2 * S);
     const dist = (vR + vL) / 2;
     const newTheta = this.robotTheta + dTheta;
     const newX = this.robotX + Math.cos(newTheta) * dist;
     const newY = this.robotY + Math.sin(newTheta) * dist;
 
     const margin = 15;
-    if (newX > margin && newX < this.W - margin && newY > margin && newY < this.H - margin) {
+    if (!checkCollision(newX, newY, margin, this.walls, this.W, this.H)) {
       this.trail = [...this.trail, { x: this.robotX, y: this.robotY }].slice(-2000);
       this.robotX = newX;
       this.robotY = newY;
@@ -201,18 +251,26 @@ class WallFollowingPage extends Component {
       raycast(this.robotX, this.robotY, this.robotTheta + a, this.walls));
 
     // Wall-following controller
-    const centralDist = readings[0];
-    const diagDist = readings[7]; // diag left
-    const leftDist = readings[6]; // left
+    const scale = 0.15; // 1 pixel = (1/0.15) mm
+    // Convert pixel distances to mm for the controller using 1/scale
+    const centralDist = readings[0] > -1 ? readings[0] / scale : -1;
+    const diagDist = readings[7] > -1 ? readings[7] / scale : -1; // diag left
+    const leftDist = readings[6] > -1 ? readings[6] / scale : -1; // left
 
-    const { leftMotor, rightMotor, k1, k2, k3 } = wallFollowingStep(centralDist, diagDist, leftDist);
+    const { leftMotor, rightMotor, k1, k2, k3 } = wallFollowingStep(centralDist, diagDist, leftDist, {
+      thLateral: this.thLateral,
+      thCentral: this.thCentral,
+      thDiag: this.thDiag,
+      maxCentral: this.maxCentral,
+      maxDiag: this.maxDiag,
+      maxLateral: this.maxLateral,
+    });
 
     // Differential drive update
-    const S = 121.5;
-    const scale = 0.15; // Scale motor commands to pixel movement
-    const vL = leftMotor * scale * this.dt;
-    const vR = rightMotor * scale * this.dt;
-    const dTheta = (vR - vL) / (2 * S) * 80; // Amplify rotation for visibility
+    const S = 20; // Half-wheelbase in pixel space
+    const vL = leftMotor * scale * this.dt * this.speed;
+    const vR = rightMotor * scale * this.dt * this.speed;
+    const dTheta = (vL - vR) / (2 * S);
     const dist = (vR + vL) / 2;
 
     const newTheta = this.robotTheta + dTheta;
@@ -221,7 +279,7 @@ class WallFollowingPage extends Component {
 
     // Collision check
     const margin = 15;
-    if (newX > margin && newX < this.W - margin && newY > margin && newY < this.H - margin) {
+    if (!checkCollision(newX, newY, margin, this.walls, this.W, this.H)) {
       this.trail = [...this.trail, { x: this.robotX, y: this.robotY }].slice(-2000);
       this.robotX = newX;
       this.robotY = newY;
@@ -300,11 +358,19 @@ class WallFollowingPage extends Component {
   <template>
     <div class="page-header">
       <h2>🧱 Wall-Following Simulator</h2>
-      <p>Switch to Manual mode and drive with WASD/arrows. Click the canvas to place the robot. Auto mode runs the reactive controller.</p>
+      <p>A reactive wall-following controller for a differential-drive robot. The robot uses three distance sensors to hug the left wall while avoiding obstacles ahead.</p>
     </div>
 
     <div {{didInsert this.setup}} class="grid-2">
       <div class="card span-2">
+        <p style="font-size:0.75rem;color:var(--text-dim);margin:0 0 0.5rem">
+          The red triangle is the robot, faint green lines are sensor rays (8 directions), and the blue trail shows where it has been.
+          In <strong>Auto</strong> mode, three reactive gains drive the motors:
+          <strong>k1</strong> turns right when an obstacle is ahead,
+          <strong>k2</strong> keeps a target distance from the left wall,
+          <strong>k3</strong> turns left to re-acquire the wall when it's lost.
+          In <strong>Manual</strong> mode, use WASD/arrows to drive. Click the canvas to reposition the robot.
+        </p>
         <div class="controls">
           <label>Mode:</label>
           <select {{on "change" this.setMode}}>
@@ -319,6 +385,12 @@ class WallFollowingPage extends Component {
             <span style="color:var(--accent);font-size:0.8rem">🎮 Use W/A/S/D or Arrow Keys to drive</span>
           {{/if}}
           <button type="button" {{on "click" this.reset}}>⏮ Reset</button>
+          <div class="slider-group">
+            <label>Speed</label>
+            <input type="number" min="0.1" max="10" step="0.1" value={{this.speed}} {{on "input" this.onSpeed}}
+              style="width:4rem;background:var(--card);border:1px solid var(--border);color:var(--text);padding:2px 4px;border-radius:4px;font-size:0.8rem">
+            <span class="val">×</span>
+          </div>
           <span style="color:var(--text-dim);font-size:0.8rem">Steps: {{this.stepCount}}</span>
         </div>
         <div class="canvas-wrap">
@@ -328,18 +400,48 @@ class WallFollowingPage extends Component {
 
       <div class="card">
         <h3 class="card-title">Controller Gains</h3>
+        <p style="font-size:0.75rem;color:var(--text-dim);margin:0 0 0.5rem">Live gain values from the reactive controller. Each gain is 0–1; higher means stronger correction.</p>
         <table class="info-table">
           <tr><th>k1 (avoid)</th><td>{{this.k1Fmt}}</td></tr>
           <tr><th>k2 (dist)</th><td>{{this.k2Fmt}}</td></tr>
           <tr><th>k3 (track)</th><td>{{this.k3Fmt}}</td></tr>
         </table>
-        <div style="margin-top:0.75rem">
-          <h4 style="font-size:0.8rem;color:var(--text-dim)">Thresholds</h4>
-          <table class="info-table">
-            <tr><td>Lateral</td><td>375 mm</td></tr>
-            <tr><td>Central</td><td>675 mm</td></tr>
-            <tr><td>Diagonal</td><td>525 mm</td></tr>
-          </table>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title">Parameters
+          <button type="button" style="margin-left:0.5rem;font-size:0.7rem" {{on "click" this.resetParams}}>Reset</button>
+        </h3>
+        <p style="font-size:0.75rem;color:var(--text-dim);margin:0 0 0.5rem">Adjust thresholds and motor speeds to see how the controller behaviour changes.</p>
+        <div class="slider-group">
+          <label style="min-width:5.5rem">Lateral TH</label>
+          <input type="range" min="100" max="800" step="25" value={{this.thLateral}} {{on "input" this.onThLateral}}>
+          <span class="val">{{this.thLateral}} mm</span>
+        </div>
+        <div class="slider-group">
+          <label style="min-width:5.5rem">Central TH</label>
+          <input type="range" min="200" max="1200" step="25" value={{this.thCentral}} {{on "input" this.onThCentral}}>
+          <span class="val">{{this.thCentral}} mm</span>
+        </div>
+        <div class="slider-group">
+          <label style="min-width:5.5rem">Diagonal TH</label>
+          <input type="range" min="100" max="1000" step="25" value={{this.thDiag}} {{on "input" this.onThDiag}}>
+          <span class="val">{{this.thDiag}} mm</span>
+        </div>
+        <div class="slider-group">
+          <label style="min-width:5.5rem">Max Central</label>
+          <input type="range" min="100" max="1500" step="50" value={{this.maxCentral}} {{on "input" this.onMaxCentral}}>
+          <span class="val">{{this.maxCentral}}</span>
+        </div>
+        <div class="slider-group">
+          <label style="min-width:5.5rem">Max Diag</label>
+          <input type="range" min="50" max="600" step="25" value={{this.maxDiag}} {{on "input" this.onMaxDiag}}>
+          <span class="val">{{this.maxDiag}}</span>
+        </div>
+        <div class="slider-group">
+          <label style="min-width:5.5rem">Max Lateral</label>
+          <input type="range" min="25" max="400" step="25" value={{this.maxLateral}} {{on "input" this.onMaxLateral}}>
+          <span class="val">{{this.maxLateral}}</span>
         </div>
       </div>
 
@@ -372,6 +474,25 @@ class WallFollowingPage extends Component {
   get yFmt() { return this.robotY.toFixed(1); }
   get thetaFmt() { return (this.robotTheta * 180 / Math.PI).toFixed(1); }
   isAuto = () => this.mode === 'auto';
+
+  @action onThLateral(e) { this.thLateral = parseInt(e.target.value); }
+  @action onThCentral(e) { this.thCentral = parseInt(e.target.value); }
+  @action onThDiag(e) { this.thDiag = parseInt(e.target.value); }
+  @action onMaxCentral(e) { this.maxCentral = parseInt(e.target.value); }
+  @action onMaxDiag(e) { this.maxDiag = parseInt(e.target.value); }
+  @action onMaxLateral(e) { this.maxLateral = parseInt(e.target.value); }
+
+  @action onSpeed(e) { this.speed = parseFloat(e.target.value); }
+  get speedFmt() { return this.speed.toFixed(1); }
+
+  @action resetParams() {
+    this.thLateral = DEFAULTS.thLateral;
+    this.thCentral = DEFAULTS.thCentral;
+    this.thDiag = DEFAULTS.thDiag;
+    this.maxCentral = DEFAULTS.maxCentral;
+    this.maxDiag = DEFAULTS.maxDiag;
+    this.maxLateral = DEFAULTS.maxLateral;
+  }
 }
 
 <template><WallFollowingPage /></template>

@@ -3,21 +3,21 @@
  * Based on fib/ROB/entregas/Pose_Laser/p_OdometryLaser.py
  */
 
-/** Axle half-width in mm */
-const S = 121.5;
-
 /**
  * Compute incremental pose from encoder deltas.
  * @param {number} dL - Left wheel distance (mm)
  * @param {number} dR - Right wheel distance (mm)
  * @param {number} theta - Current heading (rad)
+ * @param {number} W - Wheelbase in mm (default 520)
  * @returns {{ dx: number, dy: number, dTheta: number }}
  */
-export function odometryStep(dL, dR, theta) {
-  const dTheta = (dR - dL) / (2 * S);
+export function odometryStep(dL, dR, theta, W = 520) {
+  const dTheta = (dR - dL) / W;
   const dist = (dR + dL) / 2;
-  const dx = Math.cos(theta + dTheta) * dist;
-  const dy = Math.sin(theta + dTheta) * dist;
+  // Use midpoint theta for better accuracy
+  const midTheta = theta + dTheta / 2;
+  const dx = Math.cos(midTheta) * dist;
+  const dy = Math.sin(midTheta) * dist;
   return { dx, dy, dTheta };
 }
 
@@ -25,16 +25,20 @@ export function odometryStep(dL, dR, theta) {
  * Build full trajectory from encoder arrays.
  * @param {number[][]} L_acu - Left encoder [timestamp, cumulative_mm]
  * @param {number[][]} R_acu - Right encoder [timestamp, cumulative_mm]
+ * @param {number} W - Wheelbase in mm (default 520)
+ * @param {number} x0 - Initial X position in mm
+ * @param {number} y0 - Initial Y position in mm
+ * @param {number} theta0 - Initial heading in rad
  * @returns {{ x: number[], y: number[], theta: number[], t: number[] }}
  */
-export function buildTrajectory(L_acu, R_acu) {
+export function buildTrajectory(L_acu, R_acu, W = 520, x0 = 0, y0 = 0, theta0 = 0) {
   const n = Math.min(L_acu.length, R_acu.length);
-  const x = [0], y = [0], theta = [0], t = [0];
+  const x = [x0], y = [y0], theta = [theta0], t = [0];
 
   for (let i = 1; i < n; i++) {
     const dL = L_acu[i][1] - L_acu[i - 1][1];
     const dR = R_acu[i][1] - R_acu[i - 1][1];
-    const { dx, dy, dTheta } = odometryStep(dL, dR, theta[i - 1]);
+    const { dx, dy, dTheta } = odometryStep(dL, dR, theta[i - 1], W);
     x.push(x[i - 1] + dx);
     y.push(y[i - 1] + dy);
     theta.push(theta[i - 1] + dTheta);
