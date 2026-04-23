@@ -263,14 +263,16 @@ class MobilePage extends Component {
 
   _handleKeyDown(e) {
     if (this.mode !== 'interactive') return;
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd'].includes(e.key)) {
+    const key = e.key.toLowerCase();
+    if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd'].includes(key)) {
       e.preventDefault();
-      this._keys[e.key] = true;
+      this._keys[key] = true;
     }
   }
 
   _handleKeyUp(e) {
-    this._keys[e.key] = false;
+    const key = e.key.toLowerCase();
+    this._keys[key] = false;
   }
 
   _startSimLoop() {
@@ -298,10 +300,10 @@ class MobilePage extends Component {
     const TURN = 10; // mm per tick differential for turning
     let vL = 0, vR = 0;
 
-    if (k['ArrowUp'] || k['w']) { vL += FWD; vR += FWD; }
-    if (k['ArrowDown'] || k['s']) { vL -= FWD; vR -= FWD; }
-    if (k['ArrowLeft'] || k['a']) { vL -= TURN; vR += TURN; }
-    if (k['ArrowRight'] || k['d']) { vL += TURN; vR -= TURN; }
+    if (k['arrowup'] || k['w']) { vL += FWD; vR += FWD; }
+    if (k['arrowdown'] || k['s']) { vL -= FWD; vR -= FWD; }
+    if (k['arrowleft'] || k['a']) { vL -= TURN; vR += TURN; }
+    if (k['arrowright'] || k['d']) { vL += TURN; vR -= TURN; }
 
     this.simVL = vL;
     this.simVR = vR;
@@ -358,14 +360,22 @@ class MobilePage extends Component {
     // Draw built-up occupancy grid from interactive scans
     if (this.showGrid && this.simOccGrid) {
       const maxHits = 6;
-      for (let gy = 0; gy < MAP_ROWS; gy++) {
-        for (let gx = 0; gx < MAP_COLS; gx++) {
-          const val = this.simOccGrid[gy * MAP_COLS + gx];
-          if (val <= 0) continue;
-          const intensity = Math.min(val / maxHits, 1);
-          ctx.fillStyle = `rgba(77,171,247,${0.15 + 0.5 * intensity})`;
-          ctx.fillRect(gx * CELL_SIZE, gy * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+      for (let hits = 1; hits <= maxHits; hits++) {
+        const intensity = hits / maxHits;
+        ctx.fillStyle = `rgba(77,171,247,${0.15 + 0.5 * intensity})`;
+        ctx.beginPath();
+        for (let gy = 0; gy < MAP_ROWS; gy++) {
+          for (let gx = 0; gx < MAP_COLS; gx++) {
+            const val = this.simOccGrid[gy * MAP_COLS + gx];
+            if (val > 0) {
+              const cellHits = Math.min(Math.ceil(val), maxHits);
+              if (cellHits === hits) {
+                ctx.rect(gx * CELL_SIZE, gy * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+              }
+            }
+          }
         }
+        ctx.fill();
       }
     }
 
@@ -388,19 +398,19 @@ class MobilePage extends Component {
       // Rays
       ctx.strokeStyle = 'rgba(105,219,124,0.12)';
       ctx.lineWidth = 0.5 / cam.scale;
+      ctx.beginPath();
       for (let j = 0; j < wx.length; j += 2) {
-        ctx.beginPath();
         ctx.moveTo(this.simX, this.simY);
         ctx.lineTo(wx[j], wy[j]);
-        ctx.stroke();
       }
+      ctx.stroke();
       // Hit points
       ctx.fillStyle = 'rgba(105,219,124,0.6)';
+      ctx.beginPath();
       for (let j = 0; j < wx.length; j++) {
-        ctx.beginPath();
-        ctx.arc(wx[j], wy[j], 4, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.rect(wx[j] - 4, wy[j] - 4, 8, 8);
       }
+      ctx.fill();
     }
 
     // Draw robot body
@@ -426,7 +436,7 @@ class MobilePage extends Component {
 
     // Heading arrow
     ctx.fillStyle = '#ff6b6b';
-    drawArrow(ctx, this.simX, this.simY, this.simTheta, 120 / cam.scale * 0.3);
+    drawArrow(ctx, this.simX, this.simY, this.simTheta, ROBOT_RADIUS * 1.5);
 
     // Velocity vector
     if (this.simVL !== 0 || this.simVR !== 0) {
@@ -505,19 +515,27 @@ class MobilePage extends Component {
     // Draw occupancy grid (built-up map)
     if (this.showGrid && this.occGrid) {
       const maxHits = 8; // saturate color at this many hits
-      for (let gy = 0; gy < GRID_SIZE; gy++) {
-        for (let gx = 0; gx < GRID_SIZE; gx++) {
-          const val = this.occGrid[gy * GRID_SIZE + gx];
-          if (val <= 0) continue;
-          const intensity = Math.min(val / maxHits, 1);
-          const r = Math.round(255 * intensity);
-          const g = Math.round(100 * (1 - intensity));
-          const b = Math.round(50 * (1 - intensity));
-          ctx.fillStyle = `rgba(${r},${g},${b},${0.3 + 0.6 * intensity})`;
-          const wx = this.gridOriginX + gx * GRID_RES;
-          const wy = this.gridOriginY + gy * GRID_RES;
-          ctx.fillRect(wx, wy, GRID_RES, GRID_RES);
+      for (let hits = 1; hits <= maxHits; hits++) {
+        const intensity = hits / maxHits;
+        const r = Math.round(255 * intensity);
+        const g = Math.round(100 * (1 - intensity));
+        const b = Math.round(50 * (1 - intensity));
+        ctx.fillStyle = `rgba(${r},${g},${b},${0.3 + 0.6 * intensity})`;
+        ctx.beginPath();
+        for (let gy = 0; gy < GRID_SIZE; gy++) {
+          for (let gx = 0; gx < GRID_SIZE; gx++) {
+            const val = this.occGrid[gy * GRID_SIZE + gx];
+            if (val > 0) {
+              const cellHits = Math.min(Math.ceil(val), maxHits);
+              if (cellHits === hits) {
+                const wx = this.gridOriginX + gx * GRID_RES;
+                const wy = this.gridOriginY + gy * GRID_RES;
+                ctx.rect(wx, wy, GRID_RES, GRID_RES);
+              }
+            }
+          }
         }
+        ctx.fill();
       }
     }
 
@@ -564,19 +582,19 @@ class MobilePage extends Component {
         // Draw laser rays from robot to hit points
         ctx.strokeStyle = 'rgba(105,219,124,0.15)';
         ctx.lineWidth = 0.5 / cam.scale;
+        ctx.beginPath();
         for (let j = 0; j < wx.length; j += 3) {
-          ctx.beginPath();
           ctx.moveTo(x[i], y[i]);
           ctx.lineTo(wx[j], wy[j]);
-          ctx.stroke();
         }
+        ctx.stroke();
         // Draw hit points
         ctx.fillStyle = 'rgba(105,219,124,0.5)';
+        ctx.beginPath();
         for (let j = 0; j < wx.length; j++) {
-          ctx.beginPath();
-          ctx.arc(wx[j], wy[j], 40, 0, Math.PI * 2);
-          ctx.fill();
+          ctx.rect(wx[j] - 40, wy[j] - 40, 80, 80);
         }
+        ctx.fill();
       }
     }
 
@@ -649,7 +667,7 @@ class MobilePage extends Component {
 
     // Draw robot heading arrow
     ctx.fillStyle = '#ff6b6b';
-    drawArrow(ctx, x[i], y[i], theta[i], 120 / cam.scale * 0.3);
+    drawArrow(ctx, x[i], y[i], theta[i], robotR * 1.5);
   }
 
   drawTrajectory() {
@@ -924,16 +942,16 @@ class MobilePage extends Component {
   }
 
   get _fwd() {
-    return this._keys['ArrowUp'] || this._keys['w'];
+    return this._keys['arrowup'] || this._keys['w'];
   }
   get _back() {
-    return this._keys['ArrowDown'] || this._keys['s'];
+    return this._keys['arrowdown'] || this._keys['s'];
   }
   get _left() {
-    return this._keys['ArrowLeft'] || this._keys['a'];
+    return this._keys['arrowleft'] || this._keys['a'];
   }
   get _right() {
-    return this._keys['ArrowRight'] || this._keys['d'];
+    return this._keys['arrowright'] || this._keys['d'];
   }
 
   get simMotionPhase() {

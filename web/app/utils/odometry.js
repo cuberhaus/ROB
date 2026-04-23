@@ -48,6 +48,8 @@ export function buildTrajectory(L_acu, R_acu, W = 520, x0 = 0, y0 = 0, theta0 = 
   return { x, y, theta, t };
 }
 
+const _laserCache = { fov: null, n: null, cos: null, sin: null };
+
 /**
  * Convert polar laser scan to Cartesian points in robot frame.
  * @param {number[]} ranges - Ray distances (mm), -1 = invalid
@@ -56,15 +58,28 @@ export function buildTrajectory(L_acu, R_acu, W = 520, x0 = 0, y0 = 0, theta0 = 
  */
 export function laserToCartesian(ranges, fov = (240 * Math.PI) / 180) {
   const n = ranges.length;
-  const angleStep = fov / (n - 1);
-  const startAngle = -fov / 2;
+  if (_laserCache.fov !== fov || _laserCache.n !== n) {
+    const angleStep = fov / (n - 1);
+    const startAngle = -fov / 2;
+    _laserCache.cos = new Float32Array(n);
+    _laserCache.sin = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const angle = startAngle + i * angleStep;
+      _laserCache.cos[i] = Math.cos(angle);
+      _laserCache.sin[i] = Math.sin(angle);
+    }
+    _laserCache.fov = fov;
+    _laserCache.n = n;
+  }
+
   const lx = [], ly = [];
+  const cos = _laserCache.cos;
+  const sin = _laserCache.sin;
 
   for (let i = 0; i < n; i++) {
     if (ranges[i] <= 0 || ranges[i] > 6000) continue;
-    const angle = startAngle + i * angleStep;
-    lx.push(ranges[i] * Math.cos(angle));
-    ly.push(ranges[i] * Math.sin(angle));
+    lx.push(ranges[i] * cos[i]);
+    ly.push(ranges[i] * sin[i]);
   }
   return { lx, ly };
 }

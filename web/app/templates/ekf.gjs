@@ -215,7 +215,7 @@ class EkfPage extends Component {
     // Draw robot
     if (curState) {
       ctx.fillStyle = '#ff6b6b';
-      drawArrow(ctx, curState.x[0], curState.x[1], curState.x[2], 80 / cam.scale * 0.3);
+      drawArrow(ctx, curState.x[0], curState.x[1], curState.x[2], 200);
     }
   }
 

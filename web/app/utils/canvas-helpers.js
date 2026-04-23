@@ -17,6 +17,8 @@ export function setupCanvas(canvas, width, height) {
   canvas.style.width = width + 'px';
   canvas.style.height = height + 'px';
   const ctx = canvas.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0); // reset transform to clear fully
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   return ctx;
 }

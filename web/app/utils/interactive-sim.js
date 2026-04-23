@@ -65,17 +65,17 @@ export function isColliding(grid, wx, wy) {
  * Returns distance to first hit (mm), or LASER_MAX if nothing hit.
  */
 function castRay(grid, ox, oy, angle) {
-  const dx = Math.cos(angle);
-  const dy = Math.sin(angle);
+  const stepSize = CELL_SIZE * 0.4; // sub-cell stepping for accuracy
+  const dx = Math.cos(angle) * stepSize;
+  const dy = Math.sin(angle) * stepSize;
 
   // Step through cells using DDA
   let x = ox, y = oy;
-  const stepSize = CELL_SIZE * 0.4; // sub-cell stepping for accuracy
   const maxSteps = Math.ceil(LASER_MAX / stepSize);
 
   for (let s = 1; s <= maxSteps; s++) {
-    x = ox + dx * stepSize * s;
-    y = oy + dy * stepSize * s;
+    x += dx;
+    y += dy;
 
     const col = Math.floor(x / CELL_SIZE);
     const row = Math.floor(y / CELL_SIZE);
@@ -89,7 +89,7 @@ function castRay(grid, ox, oy, angle) {
     }
   }
 
-  return LASER_MAX;
+  return -1; // No hit within LASER_MAX
 }
 
 /**
@@ -106,8 +106,10 @@ export function simulateLaser(grid, rx, ry, rTheta) {
     const angle = startAngle + i * angleStep;
     const dist = castRay(grid, rx, ry, angle);
     ranges.push(dist);
-    wx.push(rx + dist * Math.cos(angle));
-    wy.push(ry + dist * Math.sin(angle));
+    if (dist !== -1) {
+      wx.push(rx + dist * Math.cos(angle));
+      wy.push(ry + dist * Math.sin(angle));
+    }
   }
 
   return { ranges, wx, wy };
@@ -144,14 +146,10 @@ export function findStartPosition(grid) {
         const row = cy + dr;
         const col = cx + dc;
         if (row >= 2 && row < MAP_ROWS - 2 && col >= 2 && col < MAP_COLS - 2) {
-          if (grid[row][col] === 0 && grid[row + 1][col] === 0 &&
-              grid[row - 1][col] === 0 && grid[row][col + 1] === 0 &&
-              grid[row][col - 1] === 0) {
-            return {
-              x: (col + 0.5) * CELL_SIZE,
-              y: (row + 0.5) * CELL_SIZE,
-              theta: 0,
-            };
+          const wx = (col + 0.5) * CELL_SIZE;
+          const wy = (row + 0.5) * CELL_SIZE;
+          if (!isColliding(grid, wx, wy)) {
+            return { x: wx, y: wy, theta: 0 };
           }
         }
       }
@@ -163,13 +161,15 @@ export function findStartPosition(grid) {
 /** Draw the map walls on the canvas context (already in world coords). */
 export function drawMap(ctx, grid, cam) {
   ctx.fillStyle = 'rgba(100,100,120,0.6)';
+  ctx.beginPath();
   for (let row = 0; row < MAP_ROWS; row++) {
     for (let col = 0; col < MAP_COLS; col++) {
       if (grid[row][col] > 0) {
-        ctx.fillRect(col * CELL_SIZE, row * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+        ctx.rect(col * CELL_SIZE, row * CELL_SIZE, CELL_SIZE, CELL_SIZE);
       }
     }
   }
+  ctx.fill();
 }
 
 export { CELL_SIZE, MAP_ROWS, MAP_COLS, LASER_MAX, LASER_RAYS, ROBOT_RADIUS, AXLE_HALF };
