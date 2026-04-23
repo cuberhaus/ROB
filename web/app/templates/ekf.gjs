@@ -184,8 +184,9 @@ class EkfPage extends Component {
 
     // Draw ground truth trail
     if (this.gtTrajectory) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-      ctx.lineWidth = 1 / cam.scale;
+      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+      ctx.lineWidth = 2 / cam.scale;
+      ctx.setLineDash([10, 10]); // Make it dashed so it shows under the blue trail
       ctx.beginPath();
       const stride = 10;
       for (let j = 0; j <= Math.min(i * stride, this.gtTrajectory.x.length - 1); j += stride) {
@@ -193,6 +194,7 @@ class EkfPage extends Component {
                  : ctx.lineTo(this.gtTrajectory.x[j], this.gtTrajectory.y[j]);
       }
       ctx.stroke();
+      ctx.setLineDash([]); // Reset line dash
     }
 
     // Draw EKF estimated trail
@@ -209,7 +211,7 @@ class EkfPage extends Component {
     const curState = this.ekfHistory[i];
     if (curState) {
       const ellipse = getCovarianceEllipse({ x: curState.x, P: curState.P });
-      drawEllipse(ctx, ellipse.cx, ellipse.cy, ellipse.rx, ellipse.ry, ellipse.angle);
+      drawEllipse(ctx, ellipse.cx, ellipse.cy, ellipse.rx, ellipse.ry, ellipse.angle, 'rgba(255,107,107,0.3)');
     }
 
     // Draw robot

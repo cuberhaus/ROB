@@ -21,6 +21,7 @@ class TrajectoryPage extends Component {
   @tracked playing = false;
   @tracked speed = 1;
   @tracked draggingWp = -1;
+  @tracked errorMsg = null;
 
   canvas = null;
   pathCanvas = null;
@@ -48,11 +49,24 @@ class TrajectoryPage extends Component {
 
   @action
   async setup(el) {
+    if (window.__trajEngine) {
+      window.__trajEngine.dispose();
+    }
     this.canvas = el.querySelector('#traj-canvas');
     this.pathCanvas = el.querySelector('#path-canvas');
     this.babylonCanvas = el.querySelector('#traj-3d-canvas');
     if (this.babylonCanvas) await this.initBabylon();
+    window.__trajEngine = this.babylonEngine;
     this.draw();
+  }
+
+  willDestroy() {
+    super.willDestroy();
+    cancelAnimationFrame(this.animId);
+    if (this.babylonEngine) {
+      this.babylonEngine.dispose();
+      window.__trajEngine = null;
+    }
   }
 
   @action
@@ -82,7 +96,14 @@ class TrajectoryPage extends Component {
       const B = await import('@babylonjs/core');
       this.BABYLON = B;
 
-      const engine = new B.Engine(this.babylonCanvas, true, { preserveDrawingBuffer: true });
+      if (!B.Engine.isSupported()) {
+        throw new Error('WebGL is not supported by your browser. If you are on Linux, you may need to enable hardware acceleration (e.g., chrome://settings/system) or force WebGL via chrome://flags/#ignore-gpu-blocklist. If you have been reloading the page often, you may have exhausted the WebGL context limit—please completely close this tab and open a new one.');
+      }
+
+      const engine = new B.Engine(this.babylonCanvas, true, {
+        disableWebGL2Support: true,
+        failIfMajorPerformanceCaveat: false
+      });
       const scene = new B.Scene(engine);
       scene.clearColor = new B.Color4(0.06, 0.07, 0.09, 1);
 
@@ -99,9 +120,11 @@ class TrajectoryPage extends Component {
       this._rebuildSceneForRobot();
 
       engine.runRenderLoop(() => scene.render());
+      // Resize handling
       const resizeObs = new ResizeObserver(() => engine.resize());
       resizeObs.observe(this.babylonCanvas);
     } catch (e) {
+      this.errorMsg = String(e.stack || e);
       console.error('Trajectory 3D init failed:', e);
     }
   }
@@ -135,11 +158,13 @@ class TrajectoryPage extends Component {
 
     // Ground grid scaled to robot
     const gridSize = reach * 3;
-    const ground = B.MeshBuilder.CreateGround('ground', { width: gridSize, height: gridSize }, scene);
+    const ground = B.MeshBuilder.CreateGround('ground', { width: gridSize, height: gridSize, subdivisions: 10 }, scene);
     const gMat = new B.StandardMaterial('gMat', scene);
-    gMat.diffuseColor = new B.Color3(0.1, 0.1, 0.12);
+    gMat.diffuseColor = new B.Color3(0.3, 0.3, 0.35); // Lighter ground to contrast the black background
     gMat.wireframe = true;
     ground.material = gMat;
+
+    new B.AxesViewer(scene, reach);
 
     // Base scaled to robot
     const baseH = reach * 0.03;
@@ -196,8 +221,10 @@ class TrajectoryPage extends Component {
     const extent = Math.max(maxB[0] - minB[0], maxB[1] - minB[1], maxB[2] - minB[2], 0.1);
 
     const camera = this.babylonScene.activeCamera;
-    camera.target = center;
-    camera.radius = extent * 1.5;
+    camera.setTarget(center);
+    camera.radius = extent * 2.5;
+    camera.minZ = 0.001;
+    camera.maxZ = 1000;
   }
 
   createArmMeshes() {
@@ -220,8 +247,8 @@ class TrajectoryPage extends Component {
     const eeMat = new B.StandardMaterial('eeMat', scene);
     eeMat.diffuseColor = new B.Color3(1, 0.42, 0.42);
 
-    const jointDiam = reach * 0.04;
-    const linkDiam = reach * 0.015;
+    const jointDiam = reach * 0.08;
+    const linkDiam = reach * 0.04;
 
     for (let i = 0; i < n; i++) {
       const joint = B.MeshBuilder.CreateSphere(`j${i}`, { diameter: jointDiam }, scene);
@@ -261,13 +288,14 @@ class TrajectoryPage extends Component {
         this.linkMeshes[i].position = mid;
         const dir = pos.subtract(prevPos);
         const len = dir.length();
-        this.linkMeshes[i].scaling = new B.Vector3(1, Math.max(len, 0.01), 1);
+        // Force the scaling to be at least tiny, otherwise the mesh completely vanishes!
+        this.linkMeshes[i].scaling = new B.Vector3(1, Math.max(len, 0.001), 1);
 
-        if (len > 0.001) {
+        if (len > 0.0001) {
           const up = new B.Vector3(0, 1, 0);
           const dirN = dir.normalize();
           const axis = B.Vector3.Cross(up, dirN);
-          if (axis.length() > 0.001) {
+          if (axis.length() > 0.0001) {
             const dot = Math.max(-1, Math.min(1, B.Vector3.Dot(up, dirN)));
             this.linkMeshes[i].rotationQuaternion = B.Quaternion.RotationAxis(axis.normalize(), Math.acos(dot));
           } else {
@@ -277,8 +305,11 @@ class TrajectoryPage extends Component {
               this.linkMeshes[i].rotationQuaternion = B.Quaternion.Identity();
             }
           }
+          this.linkMeshes[i].isVisible = true;
         } else {
           this.linkMeshes[i].rotationQuaternion = B.Quaternion.Identity();
+          // If the link has literally zero length, hide it entirely
+          this.linkMeshes[i].isVisible = false;
         }
       }
 
@@ -599,7 +630,13 @@ class TrajectoryPage extends Component {
           Real-time 3D view of the robot arm at the current playback position.
           The blue trail shows the full end-effector path. Drag to orbit, scroll to zoom.
         </p>
-        <div class="canvas-wrap" style="height:350px">
+        <div class="canvas-wrap" style="height:350px;position:relative">
+          {{#if this.errorMsg}}
+            <div style="position:absolute;z-index:10;background:rgba(255,0,0,0.8);color:white;padding:1rem;inset:0;overflow:auto">
+              <strong>Error rendering 3D view:</strong>
+              <pre style="white-space:pre-wrap;font-size:11px">{{this.errorMsg}}</pre>
+            </div>
+          {{/if}}
           <canvas id="traj-3d-canvas" style="width:100%;height:100%"></canvas>
         </div>
       </div>

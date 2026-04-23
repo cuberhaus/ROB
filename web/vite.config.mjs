@@ -6,6 +6,16 @@ export default defineConfig({
   server: {
     port: 8092,
   },
+  build: {
+    chunkSizeWarningLimit: 6000,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          babylon: ['@babylonjs/core'],
+        },
+      },
+    },
+  },
   plugins: [
     classicEmberSupport(),
     ember(),
