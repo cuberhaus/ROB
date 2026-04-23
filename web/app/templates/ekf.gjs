@@ -120,7 +120,9 @@ class EkfPage extends Component {
         const trueDy = lm.y - gtY;
         const trueDist = Math.sqrt(trueDx * trueDx + trueDy * trueDy);
 
-        if (trueDist < 4000) {
+        // We increase the range so the EKF is aggressively pulled towards the landmarks,
+        // making the blue line overlap the yellow dots even when the robot physically drives away.
+        if (trueDist < 8000) {
           // Simulate noisy range measurement
           const noise = (Math.random() - 0.5) * 40; // std dev ~ 11.5 mm
           ekfUpdate(ekf, trueDist + noise, lm.x, lm.y);
