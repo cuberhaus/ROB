@@ -1,0 +1,9 @@
+{
+  "//": "cuberhaus reproducible dev environment (universal: multi-language / unknown / niche toolchains). Ships python, node, java, and more. Managed source: cuberhaus-workspace/assets/devcontainers/universal. Applied per repo by scripts/apply-devcontainers.ps1.",
+  "name": "cuberhaus universal",
+  "image": "mcr.microsoft.com/devcontainers/universal:2-linux",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "postCreateCommand": "bash -lc 'if [ -f skills-lock.json ]; then make skills-restore || true; fi'"
+}
